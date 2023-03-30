@@ -1,0 +1,10 @@
+# ninja log v5
+1	22632	1677258898491107604	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/group_points.o	b369b1a7a5bafdb6
+0	22827	1677258898687105026	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/ball_query.o	72400905285b421e
+1	22866	1677258898727104500	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/interpolate.o	1411f6e64c58de2f
+2	22896	1677258898755104131	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/sampling.o	c8bc5bf6f1e55289
+1	23051	1677258898907102132	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/bindings.o	f83828352f3958f0
+0	41534	1677258917394858992	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/ball_query_gpu.o	5c4e32f06076ab34
+1	41827	1677258917686855151	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/group_points_gpu.o	e2ce8c521462832e
+2	42021	1677258917886852521	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/interpolate_gpu.o	45d4179b8c7dea6
+2	43686	1677258919546830688	/hdd4/alebai/projects/PCT_Pytorch/pointnet2_ops_lib/build/temp.linux-x86_64-cpython-38/pointnet2_ops/_ext-src/src/sampling_gpu.o	6b0aefb530268232
