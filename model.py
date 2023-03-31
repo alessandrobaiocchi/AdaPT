@@ -275,7 +275,12 @@ class Point_Transformer_Adaptive(nn.Module):
                     # Convert to log-prob
                     pred_score = torch.log(pred_score + 1e-8)
                     # Sample mask and update previous one
-                    hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 1:2] * prev_decision
+                    #hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 1:2] * prev_decision
+                    # OR Deterministic mask and update previous one
+                    soft = F.softmax(pred_score, dim=-1)[:, :, 1:2]
+                    hard = torch.argmax(pred_score, dim=-1).float().unsqueeze(-1)
+                    decision = soft + (hard - soft).detach()
+                    hard_keep_decision = decision * prev_decision
                 else:
                     # Treshold mask and update previous one
                     hard_keep_decision = (pred_score[:, :, 1:2] > 0.9).float() * prev_decision
