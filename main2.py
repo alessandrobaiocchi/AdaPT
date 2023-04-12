@@ -84,7 +84,8 @@ def visualize(args, io):
     y = torch.from_numpy(obj[1])
     model = Lightning_Pct(args).to(device)
     #ckpt_path = "checkpoints/"+args.exp_name+"/models/best.ckpt"
-    ckpt_path = "PCT_Pytorch/0g02r60u/checkpoints/epoch=99-step=15300.ckpt"
+    #ckpt_path = "PCT_Pytorch/0g02r60u/checkpoints/epoch=99-step=15300.ckpt"
+    ckpt_path = "PCT_Pytorch/7oq5te7m/checkpoints/epoch=99-step=15300.ckpt" #DETERMINISTIC DROP
     #model = model.load_from_checkpoint(ckpt_path, args)
     model.load_state_dict(torch.load(ckpt_path)["state_dict"])
     model.eval()
@@ -95,9 +96,17 @@ def visualize(args, io):
     print(masks[1].shape)
     preds = logits.max(dim=1)[1]
     print(preds, y)
-    print(masks[0])
+    print(masks[2])
 
-    print(distrs[0])
+    print(distrs[3])
+
+    keepprob = [temp[1] for temp in distrs[3]]
+
+    #print(keepprob)
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.hist(keepprob, bins=15)
+    plt.savefig("histdrop3.png")
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')

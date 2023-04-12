@@ -105,7 +105,11 @@ class Pct(nn.Module):
 
         #print("output SA:", x.shape)
 
-        x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
+        #POOLING INSTEAD OF CLASS TOKEN
+        x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
+        x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+
+        #x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
         x = self.dp1(x)
         x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
         x = self.dp2(x)
@@ -298,4 +302,39 @@ class Point_Transformer_Adaptive(nn.Module):
             x = l(x, policy=policy)
 
         return x, out_pred_prob, pred_distr
+
+
+
+class CrossAttention(nn.Module):
+    
+    def __init__(self, d_model, d_k, d_v, dropout=0.1):
+        super().__init__()
+
+        self.w_qs = nn.Conv1d(d_model, d_k, kernel_size=1, bias=False)
+        self.w_ks = nn.Conv1d(d_model, d_k, kernel_size=1, bias=False)
+        self.w_vs = nn.Conv1d(d_model, d_v, kernel_size=1, bias=False)
+        
+        nn.init.normal_(self.w_qs.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_k)))
+        nn.init.normal_(self.w_ks.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_k)))
+        nn.init.normal_(self.w_vs.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_v)))
+        
+        self.fc = nn.Conv1d(d_v, d_model, kernel_size=1, bias=False)
+        nn.init.xavier_normal_(self.fc.weight)
+        self.dropout = nn.Dropout(p=dropout)
+
+
+    def forward(self, x, ):
+
+        x = x.permute(0,2,1)
+
+        # x (batch, tokens, features) are the tokens.
+        q = self.w_qs(x)
+        k = self.w_ks(x)
+        v = self.w_vs(x)
+        attn = torch.einsum('blk,btk->blt', [q, k]) / np.sqrt(q.shape[-1])
+        attn = attn.softmax(dim=-1)
+        output = torch.einsum('bhlt,bhtv->bhlv', [attn, v])
+        output = rearrange(output, 'b head l v -> b (head v) l')
+        output = self.dropout(self.fc(output))
+        return output, attn
 
