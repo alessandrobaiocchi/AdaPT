@@ -106,10 +106,12 @@ class Pct(nn.Module):
         #print("output SA:", x.shape)
 
         #POOLING INSTEAD OF CLASS TOKEN
-        x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
-        x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+        #x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
+        #x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
 
-        #x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
+        x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
+        
+        
         x = self.dp1(x)
         x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
         x = self.dp2(x)
@@ -307,17 +309,15 @@ class Point_Transformer_Adaptive(nn.Module):
 
 class CrossAttention(nn.Module):
     
-    def __init__(self, d_model, d_k, d_v, dropout=0.1):
+    def __init__(self, d_model, d_k, d_v, n_q, dropout=0.1):
         super().__init__()
 
-        self.w_qs = nn.Conv1d(d_model, d_k, kernel_size=1, bias=False)
         self.w_ks = nn.Conv1d(d_model, d_k, kernel_size=1, bias=False)
         self.w_vs = nn.Conv1d(d_model, d_v, kernel_size=1, bias=False)
-        
-        nn.init.normal_(self.w_qs.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_k)))
+        self.q = nn.Parameter(torch.randn((n_q,d_k), requires_grad=True)) # trainable queries
         nn.init.normal_(self.w_ks.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_k)))
         nn.init.normal_(self.w_vs.weight, mean=0, std=np.sqrt(2.0 / (d_model + d_v)))
-        
+
         self.fc = nn.Conv1d(d_v, d_model, kernel_size=1, bias=False)
         nn.init.xavier_normal_(self.fc.weight)
         self.dropout = nn.Dropout(p=dropout)
@@ -328,13 +328,82 @@ class CrossAttention(nn.Module):
         x = x.permute(0,2,1)
 
         # x (batch, tokens, features) are the tokens.
-        q = self.w_qs(x)
+        q = repeat(self.q, 'nq dk -> b dk nq', b=x.shape[0])
         k = self.w_ks(x)
         v = self.w_vs(x)
-        attn = torch.einsum('blk,btk->blt', [q, k]) / np.sqrt(q.shape[-1])
-        attn = attn.softmax(dim=-1)
-        output = torch.einsum('bhlt,bhtv->bhlv', [attn, v])
-        output = rearrange(output, 'b head l v -> b (head v) l')
-        output = self.dropout(self.fc(output))
-        return output, attn
+        #v = self.v
+        print(q.shape, k.shape)
+        attn = torch.einsum('bkt,bkl->blt', [q, k]) / np.sqrt(q.shape[-1])
+        
+        
+        if self.training: 
+            #ATTENTION WITH GUMBEL
+            hardattn = F.gumbel_softmax(torch.log(attn), hard=True)
+        else:
+            #HARD ATTENTION WITH ARGMAX
+            hard = torch.argmax(attn, dim=-1)
+            hardattn = torch.zeros_like(attn).scatter_(-1, hard.unsqueeze(-1), 1)
+        
+        print(attn.shape, v.shape)
+        output = torch.einsum('btl,bvt->blv', [hardattn, v])
+        output = rearrange(output, 'b l v -> b v l')
+        output = self.dropout(self.fc(output)).permute(0,2,1)
+        return output, hardattn
+    
 
+class CrossTransformerBlock(nn.Module):
+    def __init__(self, d_model, d_k, d_v, n_q, dropout=0.1):
+        super().__init__()
+        self.sa = CrossAttention(d_model, d_k, d_v, n_q=n_q,dropout=dropout)
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.ff = nn.Sequential(
+            nn.Linear(d_model, d_model*2),
+            nn.GELU(),
+            nn.Linear(d_model*2, d_model)
+        )
+
+    def forward(self, x, policy=None):
+        x = self.sa(self.ln1(x), policy=policy)[0].permute(0,2,1) + x
+        x = self.ff(self.ln2(x)) + x
+        return x
+    
+
+
+class Point_Transformer_Merger(nn.Module):
+    def __init__(self, args, channels=256, d_model = 256, d_k=16, d_v=32, n_heads=8, n_blocks=4, n_mergers=4, n_q = [64,32,16,8]):
+        super(Point_Transformer_Merger, self).__init__()
+        self.args = args
+        self.conv1 = nn.Conv1d(channels, d_model, kernel_size=1, bias=False)
+        self.conv2 = nn.Conv1d(d_model, d_model, kernel_size=1, bias=False)
+
+        self.bn1 = nn.BatchNorm1d(d_model)
+        self.bn2 = nn.BatchNorm1d(d_model)
+
+        self.cls_token = nn.Parameter(torch.randn((d_model,), requires_grad=True)) # Class token
+        self.blocks = nn.ModuleList([TransformerBlock(d_model, d_k, d_v, n_heads) for _ in range(n_blocks)]) # Transformer blocks
+        self.mergers = nn.ModuleList([CrossTransformerBlock(d_model, d_k, d_v, n_q[i]) for i in range(n_blocks)]) # Transformer blocks
+        #self.layers_to_drop = layers_to_drop
+        #self.score_predictor = nn.ModuleList([DropPredictor(d_model) for _ in range(n_blocks)])
+        
+    def forward(self, x, drop_temp=1):
+        
+        # B, D, N
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+
+        x = x.permute(0,2,1)
+        x = torch.cat([x, repeat(self.cls_token, 'v -> b 1 v', b=x.shape[0])], dim=1)
+    
+        # Initialize drop decisions
+        B, P, _ = x.shape
+        policy = torch.ones(B, P, 1, dtype=x.dtype, device=x.device)
+        #policy = torch.zeros(B, P, 1, dtype=x.dtype, device=x.device)
+
+        for i, l in enumerate(self.blocks):
+            
+            x = self.mergers[i](x, policy=policy)
+            x = l(x)
+
+        return x
+    

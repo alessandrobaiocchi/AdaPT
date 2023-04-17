@@ -21,7 +21,7 @@ from mpl_toolkits.mplot3d import Axes3D
 import time 
 import os
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 os.environ["WANDB_API_KEY"] = "04a5d6fba030b76e5b620f5bd6509cf7dffebb8b"
 
 
@@ -64,7 +64,9 @@ def test(args, io):
 
     model = Lightning_Pct(args)
     #ckpt_path = "checkpoints/"+args.exp_name+"/models/best.ckpt"
-    ckpt_path = "PCT_Pytorch/6w3c4337/checkpoints/epoch=99-step=15300.ckpt"
+    #ckpt_path = "PCT_Pytorch/6w3c4337/checkpoints/epoch=99-step=15300.ckpt"  #DETERMINISTIC DROP
+    ckpt_path = "PCT_Pytorch/1nca3jm1/checkpoints/epoch=99-step=15300.ckpt"   #GUMBEL NOISE
+
     #model = model.load_from_checkpoint(ckpt_path, args)
     model.load_state_dict(torch.load(ckpt_path)["state_dict"])
     #model = nn.DataParallel(model) 
@@ -98,15 +100,15 @@ def visualize(args, io):
     print(preds, y)
     print(masks[2])
 
-    print(distrs[3])
+    print(distrs[2])
 
-    keepprob = [temp[1] for temp in distrs[3]]
+    keepprob = [temp[1] for temp in distrs[2]]
 
     #print(keepprob)
     fig = plt.figure()
     ax = fig.add_subplot(111)
     ax.hist(keepprob, bins=15)
-    plt.savefig("histdrop3.png")
+    plt.savefig("histdrop2.png")
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')

@@ -1,10 +1,18 @@
-import matplotlib.pyplot as plt
-import numpy as np
+from model import CrossAttention
+import torch
+import torch.nn.functional as F
 
-x = np.array([1,2,3,4,5,6,7,8,9,10])
-y = np.array([1,2,3,4,5,6,7,8,9,10])
-fig = plt.figure()
-ax = fig.add_subplot(111)
-ax.plot(x, y)
-plt.savefig("dummy_name.png")
 
+
+crossatt = CrossAttention(128,64,64,3)
+x = torch.randn(1, 10, 128)
+
+output, attn = crossatt(x)
+
+print(attn)
+hard = torch.argmax(attn, dim=-1)
+print(hard)
+print(output.shape)
+
+gumbatt = F.gumbel_softmax(torch.log(attn), hard=True, tau=10e-8)
+print(gumbatt+attn)
