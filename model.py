@@ -54,7 +54,7 @@ class DropPredictor(nn.Module):
         return self.out_conv(x)
 
 class Pct(nn.Module):
-    def __init__(self, args, output_channels=40, adaptive = False, layers_to_drop = []):
+    def __init__(self, args, output_channels=40):
         super(Pct, self).__init__()
         self.args = args
         self.conv1 = nn.Conv1d(3, 64, kernel_size=1, bias=False)
@@ -64,8 +64,10 @@ class Pct(nn.Module):
         self.gather_local_0 = Local_op(in_channels=128, out_channels=128)
         self.gather_local_1 = Local_op(in_channels=256, out_channels=256)
 
-        if adaptive:   
-            self.pt_last = Point_Transformer_Adaptive(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4, layers_to_drop=layers_to_drop)
+        if args.train.adaptive.is_adaptive:   
+            self.pt_last = Point_Transformer_Adaptive(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4, layers_to_drop=args.train.adaptive.layers_to_drop)
+        elif args.train.merger.is_merger:
+            self.pt_last = Point_Transformer_Merger(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
         else:
             self.pt_last = Point_Transformer_Last(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
         
@@ -74,10 +76,10 @@ class Pct(nn.Module):
 
         self.linear1 = nn.Linear(512, 256, bias=False)
         self.bn6 = nn.BatchNorm1d(256)
-        self.dp1 = nn.Dropout(p=args.dropout)
+        self.dp1 = nn.Dropout(p=args.train.dropout)
         self.linear2 = nn.Linear(256, 128)
         self.bn7 = nn.BatchNorm1d(128)
-        self.dp2 = nn.Dropout(p=args.dropout)
+        self.dp2 = nn.Dropout(p=args.train.dropout)
         self.linear3 = nn.Linear(128, output_channels)
 
     def forward(self, x, drop_temp=1):
@@ -100,7 +102,10 @@ class Pct(nn.Module):
 
         #print("feature1:", feature_1.shape)
 
-        x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
+        if self.args.train.adaptive.is_adaptive:
+            x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
+        elif self.args.train.merger.is_merger:
+            x= self.pt_last(feature_1)
         #x, masks = self.pt_last(x)
 
         #print("output SA:", x.shape)
@@ -109,15 +114,20 @@ class Pct(nn.Module):
         #x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
         #x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
 
+        #CLASS TOKEN
         x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
         
-        
+
         x = self.dp1(x)
         x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
         x = self.dp2(x)
         x = self.linear3(x)
+        if self.args.train.adaptive.is_adaptive:
+            return x, masks, distr
+        elif self.args.train.merger.is_merger:
+            return x
+        
 
-        return x, masks, distr
 
 class Point_Transformer_Last(nn.Module):
     def __init__(self, args, channels=256, d_model = 256, d_k=16, d_v=32, n_heads=8, n_blocks=4):
@@ -332,19 +342,19 @@ class CrossAttention(nn.Module):
         k = self.w_ks(x)
         v = self.w_vs(x)
         #v = self.v
-        print(q.shape, k.shape)
+        #print(q.shape, k.shape)
         attn = torch.einsum('bkt,bkl->blt', [q, k]) / np.sqrt(q.shape[-1])
         
         
         if self.training: 
             #ATTENTION WITH GUMBEL
-            hardattn = F.gumbel_softmax(torch.log(attn), hard=True)
+            hardattn = F.gumbel_softmax(attn, hard=True)
         else:
             #HARD ATTENTION WITH ARGMAX
             hard = torch.argmax(attn, dim=-1)
             hardattn = torch.zeros_like(attn).scatter_(-1, hard.unsqueeze(-1), 1)
         
-        print(attn.shape, v.shape)
+        #print(attn.shape, v.shape)
         output = torch.einsum('btl,bvt->blv', [hardattn, v])
         output = rearrange(output, 'b l v -> b v l')
         output = self.dropout(self.fc(output)).permute(0,2,1)
@@ -363,15 +373,15 @@ class CrossTransformerBlock(nn.Module):
             nn.Linear(d_model*2, d_model)
         )
 
-    def forward(self, x, policy=None):
-        x = self.sa(self.ln1(x), policy=policy)[0].permute(0,2,1) + x
-        x = self.ff(self.ln2(x)) + x
+    def forward(self, x):
+        x = self.sa(self.ln1(x))[0]
+        x = self.ff(self.ln2(x))
         return x
     
 
 
 class Point_Transformer_Merger(nn.Module):
-    def __init__(self, args, channels=256, d_model = 256, d_k=16, d_v=32, n_heads=8, n_blocks=4, n_mergers=4, n_q = [64,32,16,8]):
+    def __init__(self, args, channels=256, d_model = 256, d_k=16, d_v=32, n_heads=8, n_blocks=4):
         super(Point_Transformer_Merger, self).__init__()
         self.args = args
         self.conv1 = nn.Conv1d(channels, d_model, kernel_size=1, bias=False)
@@ -382,11 +392,11 @@ class Point_Transformer_Merger(nn.Module):
 
         self.cls_token = nn.Parameter(torch.randn((d_model,), requires_grad=True)) # Class token
         self.blocks = nn.ModuleList([TransformerBlock(d_model, d_k, d_v, n_heads) for _ in range(n_blocks)]) # Transformer blocks
-        self.mergers = nn.ModuleList([CrossTransformerBlock(d_model, d_k, d_v, n_q[i]) for i in range(n_blocks)]) # Transformer blocks
+        self.mergers = nn.ModuleList([CrossTransformerBlock(d_model, d_k, d_v, args.train.merger.n_q[i]) for i in range(n_blocks)]) # Transformer blocks
         #self.layers_to_drop = layers_to_drop
         #self.score_predictor = nn.ModuleList([DropPredictor(d_model) for _ in range(n_blocks)])
         
-    def forward(self, x, drop_temp=1):
+    def forward(self, x):
         
         # B, D, N
         x = F.relu(self.bn1(self.conv1(x)))
@@ -395,14 +405,11 @@ class Point_Transformer_Merger(nn.Module):
         x = x.permute(0,2,1)
         x = torch.cat([x, repeat(self.cls_token, 'v -> b 1 v', b=x.shape[0])], dim=1)
     
-        # Initialize drop decisions
-        B, P, _ = x.shape
-        policy = torch.ones(B, P, 1, dtype=x.dtype, device=x.device)
-        #policy = torch.zeros(B, P, 1, dtype=x.dtype, device=x.device)
-
         for i, l in enumerate(self.blocks):
-            
-            x = self.mergers[i](x, policy=policy)
+
+            points_x = x[:, :-1]                
+            points_x = self.mergers[i](points_x)
+            x = torch.cat([x[:, -1:], points_x], dim=1)
             x = l(x)
 
         return x

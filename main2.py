@@ -12,11 +12,13 @@ from torch.utils.data import DataLoader
 from util import cal_loss, IOStream
 import sklearn.metrics as metrics
 import wandb
-from pylightning_mods import Lightning_Pct
+from pylightning_mods import Lightning_pct_adaptive, Lightning_pct_merger
 from pytorch_lightning.loggers import WandbLogger
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import hydra
+from omegaconf import DictConfig
 
 import time 
 import os
@@ -24,45 +26,57 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 os.environ["WANDB_API_KEY"] = "04a5d6fba030b76e5b620f5bd6509cf7dffebb8b"
 
-
-def _init_():
+#@hydra.main(config_path=".", config_name="config", version_base=None)
+def _init_(cfg):
     if not os.path.exists('checkpoints'):
         os.makedirs('checkpoints')
-    if not os.path.exists('checkpoints/'+args.exp_name):
-        os.makedirs('checkpoints/'+args.exp_name)
-    if not os.path.exists('checkpoints/'+args.exp_name+'/'+'models'):
-        os.makedirs('checkpoints/'+args.exp_name+'/'+'models')
-    os.system('cp main2.py checkpoints'+'/'+args.exp_name+'/'+'main2.py.backup')
-    os.system('cp pylightning_mods.py checkpoints'+'/'+args.exp_name+'/'+'pylightning_mods.py.backup')
-    os.system('cp model.py checkpoints' + '/' + args.exp_name + '/' + 'model.py.backup')
-    os.system('cp util.py checkpoints' + '/' + args.exp_name + '/' + 'util.py.backup')
-    os.system('cp data.py checkpoints' + '/' + args.exp_name + '/' + 'data.py.backup')
+    if not os.path.exists('checkpoints/'+cfg.experiment.exp_name):
+        os.makedirs('checkpoints/'+cfg.experiment.exp_name)
+    if not os.path.exists('checkpoints/'+cfg.experiment.exp_name+'/'+'models'):
+        os.makedirs('checkpoints/'+cfg.experiment.exp_name+'/'+'models')
+    os.system('cp main2.py checkpoints'+'/'+cfg.experiment.exp_name+'/'+'main2.py.backup')
+    os.system('cp pylightning_mods.py checkpoints'+'/'+cfg.experiment.exp_name+'/'+'pylightning_mods.py.backup')
+    os.system('cp model.py checkpoints' + '/' + cfg.experiment.exp_name + '/' + 'model.py.backup')
+    os.system('cp util.py checkpoints' + '/' + cfg.experiment.exp_name + '/' + 'util.py.backup')
+    os.system('cp data.py checkpoints' + '/' + cfg.experiment.exp_name + '/' + 'data.py.backup')
 
-def train(args, io):
-    train_loader = DataLoader(ModelNet40(partition='train', num_points=args.num_points), num_workers=2,
-                            batch_size=args.batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(ModelNet40(partition='test', num_points=args.num_points), num_workers=2,
-                            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
 
-    device = "cuda" if args.cuda else "cpu"
+#@hydra.main(config_path=".", config_name="config", version_base=None)
+def train(cfg):
+    train_loader = DataLoader(ModelNet40(partition='train', num_points=cfg.train.num_points), num_workers=2,
+                            batch_size=cfg.train.batch_size, shuffle=True, drop_last=True)
+    test_loader = DataLoader(ModelNet40(partition='test', num_points=cfg.test.num_points), num_workers=2,
+                            batch_size=cfg.test.batch_size, shuffle=False, drop_last=False)
 
-    model = Lightning_Pct(args)
+    device = "cuda" if cfg.cuda else "cpu"
+
+    if cfg.train.adaptive.is_adaptive:
+        model = Lightning_pct_adaptive(cfg)
+    elif cfg.train.merger.is_merger:
+        model = Lightning_pct_merger(cfg)
+    else:
+        "ERROR: No model selected."
+    
     print(str(model))
     #model = nn.DataParallel(model)
 
-    wandb_logger = WandbLogger(project="PCT_Pytorch", name=args.exp_name, config=args)
-
-    trainer = pl.Trainer(max_epochs=args.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2, default_root_dir="some/path/")
+    if cfg.wandb:
+        wandb_logger = WandbLogger(project="PCT_Pytorch", name=cfg.experiment.exp_name, config=cfg)
+        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2, default_root_dir="some/path/")
+    else:
+        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, gradient_clip_val=2, default_root_dir="some/path/")
     trainer.fit(model, train_loader, test_loader)
-    wandb.finish()
+    if cfg.wandb:
+        wandb.finish()
 
-def test(args, io):
-    test_loader = DataLoader(ModelNet40(partition='test', num_points=args.num_points),
-                            batch_size=args.test_batch_size, shuffle=False, drop_last=False)
+#@hydra.main(config_path=".", config_name="config", version_base=None)
+def test(cfg):
+    test_loader = DataLoader(ModelNet40(partition='test', num_points=cfg.test.num_points),
+                            batch_size=cfg.test.batch_size, shuffle=False, drop_last=False)
 
-    device = "cuda" if args.cuda else "cpu"
+    device = "cuda" if cfg.cuda else "cpu"
 
-    model = Lightning_Pct(args)
+    model = Lightning_Pct(cfg)
     #ckpt_path = "checkpoints/"+args.exp_name+"/models/best.ckpt"
     #ckpt_path = "PCT_Pytorch/6w3c4337/checkpoints/epoch=99-step=15300.ckpt"  #DETERMINISTIC DROP
     ckpt_path = "PCT_Pytorch/1nca3jm1/checkpoints/epoch=99-step=15300.ckpt"   #GUMBEL NOISE
@@ -70,21 +84,26 @@ def test(args, io):
     #model = model.load_from_checkpoint(ckpt_path, args)
     model.load_state_dict(torch.load(ckpt_path)["state_dict"])
     #model = nn.DataParallel(model) 
-    wandb_logger = WandbLogger(project="PCT_Pytorch", name=args.exp_name, config=args)
-    trainer = pl.Trainer(max_epochs=args.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2)
+    if cfg.wandb:
+        wandb_logger = WandbLogger(project="PCT_Pytorch", name=cfg.experiment.exp_name, config=cfg)
+        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2)
+    else:
+        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, gradient_clip_val=2)
     trainer.test(model, test_loader)
-    wandb.finish()
+    if cfg.wandb:
+        wandb.finish()
 
-def visualize(args, io):
+#@hydra.main(config_path=".", config_name="config", version_base=None)
+def visualize(cfg):
     
-    obj = ModelNet40(partition='test', num_points=args.num_points)[3]
+    obj = ModelNet40(partition='test', num_points=cfg.test.num_points)[3]
 
-    device = "cuda" if args.cuda else "cpu"
+    device = "cuda" if cfg.cuda else "cpu"
 
     x = torch.from_numpy(obj[0]).unsqueeze(0).to(device)
     print(x.shape)
     y = torch.from_numpy(obj[1])
-    model = Lightning_Pct(args).to(device)
+    model = Lightning_Pct(cfg).to(device)
     #ckpt_path = "checkpoints/"+args.exp_name+"/models/best.ckpt"
     #ckpt_path = "PCT_Pytorch/0g02r60u/checkpoints/epoch=99-step=15300.ckpt"
     ckpt_path = "PCT_Pytorch/7oq5te7m/checkpoints/epoch=99-step=15300.ckpt" #DETERMINISTIC DROP
@@ -129,84 +148,33 @@ def visualize(args, io):
     # displaying the plot
     plt.savefig("test.png")
 
+@hydra.main(config_path=".", config_name="config", version_base=None)
+def main(cfg: DictConfig):
 
-if __name__ == "__main__":
-    # Training settings
-    parser = argparse.ArgumentParser(description='Point Cloud Recognition')
-    parser.add_argument('--exp_name', type=str, default='exp', metavar='N',
-                        help='Name of the experiment')
-    parser.add_argument('--dataset', type=str, default='modelnet40', metavar='N',
-                        choices=['modelnet40'])
-    parser.add_argument('--batch_size', type=int, default=32, metavar='batch_size',
-                        help='Size of batch)')
-    parser.add_argument('--test_batch_size', type=int, default=16, metavar='batch_size',
-                        help='Size of batch)')
-    parser.add_argument('--epochs', type=int, default=250, metavar='N',
-                        help='number of episode to train ')
-    parser.add_argument('--use_sgd', type=bool, default=True,
-                        help='Use SGD')
-    parser.add_argument('--lr', type=float, default=0.0001, metavar='LR',
-                        help='learning rate (default: 0.001, 0.1 if using sgd)')
-    parser.add_argument('--momentum', type=float, default=0.9, metavar='M',
-                        help='SGD momentum (default: 0.9)')
-    parser.add_argument('--no_cuda', type=bool, default=False,
-                        help='enables CUDA training')
-    parser.add_argument('--seed', type=int, default=1, metavar='S',
-                        help='random seed (default: 1)')
-    parser.add_argument('--eval', type=bool,  default=False,
-                        help='evaluate the model')
-    parser.add_argument('--visualize', type=bool,  default=False,
-                        help='visualize the point masking')
-    parser.add_argument('--num_points', type=int, default=1024,
-                        help='num of points to use')
-    parser.add_argument('--dropout', type=float, default=0.5,
-                        help='dropout rate')
-    parser.add_argument('--model_path', type=str, default='', metavar='N',
-                        help='Pretrained model path')
-    parser.add_argument('--adaptive', type=bool, default=False,
-                        help='Adaptive point drop')
-    parser.add_argument('--alpha', type=float, default=0.01, 
-                        help="Weight for the drop regularization loss")
-    parser.add_argument('--layers_to_drop', help='List of layers where points are dropped', 
-                        type=lambda s: [int(item) for item in s.split(',')], default="-1")
-    parser.add_argument('--drop_ratio', help='List of drop ratios for each layer', 
-                        type=lambda s: [float(item) for item in s.split(',')], default="-1")
-    parser.add_argument('--no_wandb', type=bool, default=False,
-                        help='Use wandb')
-    parser.add_argument('--drop_slow_start', type=int, default=0,
-                        help='Drop warmup starting epoch')
-    parser.add_argument('--drop_slow_end', type=int, default=10,
-                        help='Drop warmup ending epoch')
-    parser.add_argument('--drop_warmup', type=bool, default=False,
-                        help='Enables drop warmup')
-    args = parser.parse_args()
-    if args.layers_to_drop == [-1]:
-        args.layers_to_drop = []
-    if args.drop_ratio == [-1]:
-        args.drop_ratio = []
+    _init_(cfg)
 
-    _init_()
+    io = IOStream('checkpoints/' + cfg.experiment.exp_name + '/run.log')
 
-    io = IOStream('checkpoints/' + args.exp_name + '/run.log')
-    io.cprint(str(args))
-
-    if not args.no_wandb:
+    if cfg.wandb:
         wandb.login()
-        wandb.init(config=args)
+        wandb.init(config=cfg)
 
-    args.cuda = not args.no_cuda and torch.cuda.is_available()
-    torch.manual_seed(args.seed)
-    if args.cuda:
+    cfg.cuda = cfg.cuda and torch.cuda.is_available()
+    torch.manual_seed(cfg.experiment.seed)
+    if cfg.cuda:
         io.cprint(
             'Using GPU : ' + str(torch.cuda.current_device()) + ' from ' + str(torch.cuda.device_count()) + ' devices')
-        torch.cuda.manual_seed(args.seed)
+        torch.cuda.manual_seed(cfg.experiment.seed)
     else:
         io.cprint('Using CPU')
 
-    if not args.eval:
-        train(args, io)
+    if not cfg.eval:
+        train(cfg)
     else:
-        if not args.visualize:
-            test(args, io)
+        if not cfg.visualize:
+            test(cfg)
         else:
-            visualize(args, io)
+            visualize(cfg)
+
+if __name__ == "__main__":
+    main()
