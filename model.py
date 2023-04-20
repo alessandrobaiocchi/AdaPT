@@ -105,7 +105,7 @@ class Pct(nn.Module):
         if self.args.train.adaptive.is_adaptive:
             x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
         elif self.args.train.merger.is_merger:
-            x= self.pt_last(feature_1)
+            x, _= self.pt_last(feature_1)
         #x, masks = self.pt_last(x)
 
         #print("output SA:", x.shape)
@@ -374,9 +374,9 @@ class CrossTransformerBlock(nn.Module):
         )
 
     def forward(self, x):
-        x = self.sa(self.ln1(x))[0]
+        x, hardattn = self.sa(self.ln1(x))
         x = self.ff(self.ln2(x))
-        return x
+        return x, hardattn
     
 
 
@@ -395,9 +395,10 @@ class Point_Transformer_Merger(nn.Module):
         self.mergers = nn.ModuleList([CrossTransformerBlock(d_model, d_k, d_v, args.train.merger.n_q[i]) for i in range(n_blocks)]) # Transformer blocks
         #self.layers_to_drop = layers_to_drop
         #self.score_predictor = nn.ModuleList([DropPredictor(d_model) for _ in range(n_blocks)])
-        
+
     def forward(self, x):
         
+        merge_ref = torch.arange(0, x.shape[2]).repeat(x.shape[0], 1).to(x.device)
         # B, D, N
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
@@ -408,9 +409,93 @@ class Point_Transformer_Merger(nn.Module):
         for i, l in enumerate(self.blocks):
 
             points_x = x[:, :-1]                
-            points_x = self.mergers[i](points_x)
-            x = torch.cat([x[:, -1:], points_x], dim=1)
+            points_x, hardattn = self.mergers[i](points_x)
+
+            assign = torch.argmax(hardattn, dim=-1)
+            newref = torch.gather(assign, dim=1, index=merge_ref)
+            merge_ref = newref
+
+            x = torch.cat([points_x, x[:, -1:]], dim=1)
             x = l(x)
 
-        return x
+        return x, merge_ref
     
+
+class Pct_nogroup(nn.Module):
+    def __init__(self, args, output_channels=40):
+        super(Pct, self).__init__()
+        self.args = args
+        self.conv1 = nn.Conv1d(3, 64, kernel_size=1, bias=False)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(64)
+        #self.gather_local_0 = Local_op(in_channels=128, out_channels=128)
+        #self.gather_local_1 = Local_op(in_channels=256, out_channels=256)
+
+        if args.train.adaptive.is_adaptive:   
+            self.pt_last = Point_Transformer_Adaptive(args, channels=128, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4, layers_to_drop=args.train.adaptive.layers_to_drop)
+        elif args.train.merger.is_merger:
+            self.pt_last = Point_Transformer_Merger(args, channels=128, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
+        else:
+            self.pt_last = Point_Transformer_Last(args, channels=128, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
+        
+
+
+
+        self.linear1 = nn.Linear(512, 256, bias=False)
+        self.bn6 = nn.BatchNorm1d(256)
+        self.dp1 = nn.Dropout(p=args.train.dropout)
+        self.linear2 = nn.Linear(256, 128)
+        self.bn7 = nn.BatchNorm1d(128)
+        self.dp2 = nn.Dropout(p=args.train.dropout)
+        self.linear3 = nn.Linear(128, output_channels)
+
+    def forward(self, x, drop_temp=1):
+        xyz = x.permute(0, 2, 1)
+        batch_size, _, _ = x.size()
+        # B, D, N
+        x = F.relu(self.bn1(self.conv1(x)))
+        # B, D, N
+        x = F.relu(self.bn2(self.conv2(x)))
+        
+        #x = x.permute(0, 2, 1)
+        #new_xyz, new_feature = sample_and_group(npoint=512, radius=0.15, nsample=32, xyz=xyz, points=x)         
+        #feature_0 = self.gather_local_0(new_feature)
+        
+        #print("feature0:", feature_0.shape)
+        
+        #feature = feature_0.permute(0, 2, 1)
+        #new_xyz, new_feature = sample_and_group(npoint=256, radius=0.2, nsample=32, xyz=new_xyz, points=feature) 
+        #feature_1 = self.gather_local_1(new_feature)
+
+        #print("feature1:", feature_1.shape)
+
+        if self.args.train.adaptive.is_adaptive:
+            x, masks,distr = self.pt_last(x, drop_temp=drop_temp)
+        elif self.args.train.merger.is_merger:
+            x, merge_ref = self.pt_last(x)
+        else:
+            x = self.pt_last(x)
+        #x, masks = self.pt_last(x)
+
+        #print("output SA:", x.shape)
+
+        #POOLING INSTEAD OF CLASS TOKEN
+        #x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
+        #x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+
+        #CLASS TOKEN
+        #x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
+        
+        #SEGMENTATION
+        x = x[:,:-1,:] #remove cls token
+
+        x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+        x = self.dp1(x)
+        x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
+        x = self.dp2(x)
+        x = self.linear3(x)
+        if self.args.train.adaptive.is_adaptive:
+            return x, masks, distr
+        elif self.args.train.merger.is_merger:
+            return x, merge_ref

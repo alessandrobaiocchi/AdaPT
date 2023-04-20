@@ -76,6 +76,7 @@ class ModelNet40(Dataset):
         return self.data.shape[0]
 
 
+
 if __name__ == '__main__':
     train = ModelNet40(1024)
     test = ModelNet40(1024, 'test')

@@ -35,7 +35,7 @@ test:
     drop_ratio: [0.2,0.4,0.6,0.8]
     alpha: 0.1
 cuda: True
-wandb: False
+wandb: True
 eval: False
 visualize: False
   

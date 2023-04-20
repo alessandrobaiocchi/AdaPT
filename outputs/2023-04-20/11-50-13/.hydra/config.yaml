@@ -1,0 +1,59 @@
+experiment:
+  exp_name: hydra_test
+  seed: 42
+dataset:
+  name: modelnet40
+model:
+  name: AdaPT
+  model_path: ''
+train:
+  batch_size: 64
+  epochs: 200
+  use_sgd: false
+  lr: 0.0001
+  momentum: 0.9
+  num_points: 1024
+  dropout: 0.5
+  adaptive:
+    is_adaptive: false
+    layers_to_drop:
+    - 0
+    - 1
+    - 2
+    - 3
+    drop_ratio:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    alpha: 0.1
+    drop_warmup: true
+    drop_slow_start: 20
+    drop_slow_end: 40
+  merger:
+    is_merger: true
+    n_q:
+    - 64
+    - 32
+    - 16
+    - 8
+test:
+  batch_size: 64
+  num_points: 1024
+  adaptive:
+    is_adaptive: true
+    layers_to_drop:
+    - 0
+    - 1
+    - 2
+    - 3
+    drop_ratio:
+    - 0.2
+    - 0.4
+    - 0.6
+    - 0.8
+    alpha: 0.1
+cuda: true
+wandb: true
+eval: false
+visualize: false
