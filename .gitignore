@@ -4,3 +4,4 @@ data/*
 PCT_Pytorch/*
 wandb/*
 *.out
+some/*
