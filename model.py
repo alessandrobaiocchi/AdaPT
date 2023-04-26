@@ -105,7 +105,7 @@ class Pct(nn.Module):
         if self.args.train.adaptive.is_adaptive:
             x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
         elif self.args.train.merger.is_merger:
-            x, _= self.pt_last(feature_1)
+            x, merge_ref= self.pt_last(feature_1)
         #x, masks = self.pt_last(x)
 
         #print("output SA:", x.shape)
@@ -114,19 +114,30 @@ class Pct(nn.Module):
         #x = F.adaptive_max_pool1d(x[:,:-1,:], 2).view(batch_size, -1)
         #x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
 
-        #CLASS TOKEN
-        x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
-        
+        if self.args.task == "classification":
+            #CLASS TOKEN
+            x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
+            
 
-        x = self.dp1(x)
-        x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
-        x = self.dp2(x)
-        x = self.linear3(x)
-        if self.args.train.adaptive.is_adaptive:
-            return x, masks, distr
-        elif self.args.train.merger.is_merger:
-            return x
+            x = self.dp1(x)
+            x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
+            x = self.dp2(x)
+            x = self.linear3(x)
+            if self.args.train.adaptive.is_adaptive:
+                return x, masks, distr
+            elif self.args.train.merger.is_merger:
+                return x
         
+        elif self.args.task == "segmentation":
+
+            #DISCARD CLASS TOKEN
+            x = F.leaky_relu(self.bn6(self.linear1(x[:,:-1,:])), negative_slope=0.2)
+            x = self.dp1(x)
+            x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
+            x = self.dp2(x)
+            x = self.linear3(x)
+            return x, merge_ref
+
 
 
 class Point_Transformer_Last(nn.Module):
@@ -291,12 +302,12 @@ class Point_Transformer_Adaptive(nn.Module):
                     # Convert to log-prob
                     pred_score = torch.log(pred_score + 1e-8)
                     # Sample mask and update previous one
-                    #hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 1:2] * prev_decision
+                    hard_keep_decision = F.gumbel_softmax(pred_score, hard=True)[:, :, 1:2] * prev_decision
                     # OR Deterministic mask and update previous one
-                    soft = F.softmax(pred_score, dim=-1)[:, :, 1:2]
-                    hard = torch.argmax(pred_score, dim=-1).float().unsqueeze(-1)
-                    decision = soft + (hard - soft).detach()
-                    hard_keep_decision = decision * prev_decision
+                    #soft = F.softmax(pred_score, dim=-1)[:, :, 1:2]
+                    #hard = torch.argmax(pred_score, dim=-1).float().unsqueeze(-1)
+                    #decision = soft + (hard - soft).detach()
+                    #hard_keep_decision = decision * prev_decision
                 else:
                     # Treshold mask and update previous one
                     hard_keep_decision = (pred_score[:, :, 1:2] > 0.9).float() * prev_decision
@@ -422,13 +433,13 @@ class Point_Transformer_Merger(nn.Module):
     
 
 class Pct_nogroup(nn.Module):
-    def __init__(self, args, output_channels=40):
-        super(Pct, self).__init__()
+    def __init__(self, args, output_channels=86):
+        super(Pct_nogroup, self).__init__()
         self.args = args
         self.conv1 = nn.Conv1d(3, 64, kernel_size=1, bias=False)
         self.conv2 = nn.Conv1d(64, 128, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(64)
+        self.bn2 = nn.BatchNorm1d(128)
         #self.gather_local_0 = Local_op(in_channels=128, out_channels=128)
         #self.gather_local_1 = Local_op(in_channels=256, out_channels=256)
 
@@ -441,14 +452,14 @@ class Pct_nogroup(nn.Module):
         
 
 
-
-        self.linear1 = nn.Linear(512, 256, bias=False)
-        self.bn6 = nn.BatchNorm1d(256)
+        self.conv3 = nn.Conv1d(512, 256, kernel_size=1, bias=False)
+        self.conv4 = nn.Conv1d(256, 128, kernel_size=1, bias=False)
+        self.conv5 = nn.Conv1d(128, output_channels, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm1d(256)
+        self.bn4 = nn.BatchNorm1d(128)
         self.dp1 = nn.Dropout(p=args.train.dropout)
-        self.linear2 = nn.Linear(256, 128)
-        self.bn7 = nn.BatchNorm1d(128)
         self.dp2 = nn.Dropout(p=args.train.dropout)
-        self.linear3 = nn.Linear(128, output_channels)
+
 
     def forward(self, x, drop_temp=1):
         xyz = x.permute(0, 2, 1)
@@ -488,13 +499,13 @@ class Pct_nogroup(nn.Module):
         #x = F.leaky_relu(self.bn6(self.linear1(x[:,-1,:])), negative_slope=0.2)
         
         #SEGMENTATION
-        x = x[:,:-1,:] #remove cls token
-
-        x = F.leaky_relu(self.bn6(self.linear1(x)), negative_slope=0.2)
+        x = x[:,:-1,:].permute(0, 2, 1) #remove cls token and reshape
+        print("output transformer:", x.shape)
+        x = F.leaky_relu(self.bn3(self.conv3(x)), negative_slope=0.2)
         x = self.dp1(x)
-        x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
+        x = F.leaky_relu(self.bn4(self.conv4(x)), negative_slope=0.2)
         x = self.dp2(x)
-        x = self.linear3(x)
+        x = self.conv5(x)
         if self.args.train.adaptive.is_adaptive:
             return x, masks, distr
         elif self.args.train.merger.is_merger:

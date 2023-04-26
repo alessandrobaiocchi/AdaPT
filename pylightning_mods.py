@@ -7,7 +7,7 @@ from model import Pct, Pct_nogroup
 from data import ModelNet40
 from torchmetrics.classification import Accuracy
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from util import cal_loss
+from util import cal_loss, DiceLoss
 import sklearn.metrics as metrics
 
 
@@ -171,7 +171,7 @@ class Lightning_pct_merger_segm(pl.LightningModule):
     def __init__(self, args, nclasses=40):
         super().__init__()
         self.model = Pct_nogroup(args)
-        self.criterion = cal_loss
+        self.criterion = DiceLoss()
         self.args = args
         self.acc = Accuracy(task="multiclass", num_classes=nclasses)
 

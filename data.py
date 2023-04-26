@@ -3,21 +3,24 @@ import glob
 import h5py
 import numpy as np
 from torch.utils.data import Dataset
+import torch
 
-def download():
+
+
+def download(folder, url):
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, 'data')
     if not os.path.exists(DATA_DIR):
         os.mkdir(DATA_DIR)
-    if not os.path.exists(os.path.join(DATA_DIR, 'modelnet40_ply_hdf5_2048')):
-        www = 'https://shapenet.cs.stanford.edu/media/modelnet40_ply_hdf5_2048.zip'
-        zipfile = os.path.basename(www)
-        os.system('wget %s --no-check-certificate; unzip %s' % (www, zipfile))
+    if not os.path.exists(os.path.join(DATA_DIR, folder)):
+        zipfile = os.path.basename(url)
+        os.system('wget %s --no-check-certificate; unzip %s' % (url, zipfile))
         os.system('mv %s %s' % (zipfile[:-4], DATA_DIR))
         os.system('rm %s' % (zipfile))
 
-def load_data(partition):
-    download()
+
+def load_modelnet(partition):
+    download('modelnet40_ply_hdf5_2048', 'https://shapenet.cs.stanford.edu/media/modelnet40_ply_hdf5_2048.zip')
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     DATA_DIR = os.path.join(BASE_DIR, 'data')
     all_data = []
@@ -59,7 +62,7 @@ def jitter_pointcloud(pointcloud, sigma=0.01, clip=0.02):
 
 class ModelNet40(Dataset):
     def __init__(self, num_points, partition='train'):
-        self.data, self.label = load_data(partition)
+        self.data, self.label = load_modelnet(partition)
         self.num_points = num_points
         self.partition = partition        
 
@@ -76,10 +79,37 @@ class ModelNet40(Dataset):
         return self.data.shape[0]
 
 
+class ShapeNet_partseg(Dataset):
+    def __init__(self, partition="train"):
+        self.alldata = []
+        self.alllabels = []
+        self.datapath = "data/shapenet_partseg/%s_data/" % partition
+        self.labelpath = "data/shapenet_partseg/%s_label/" % partition
+        i = 0
+        maxlab = 0
+        for root, dirs, files in os.walk(self.datapath):
+            for file in files:
+                filepath = os.path.join(root,file)
+                data = np.genfromtxt(filepath, delimiter=' ')
+                self.alldata.append(torch.from_numpy(data))
+                label = np.genfromtxt(filepath.replace("_data", "_label").replace("pts", "seg"), delimiter=' ')
+                if np.max(label)>maxlab: maxlab = np.max(label)
+                self.alllabels.append(torch.from_numpy(label)+i)
+            i += maxlab
+        print(i)
+    def __len__(self):
+        return len(self.alldata)
+
+    def __getitem__(self, item):
+        return self.alldata[item], self.alllabels[item]
 
 if __name__ == '__main__':
-    train = ModelNet40(1024)
-    test = ModelNet40(1024, 'test')
-    for data, label in train:
-        print(data.shape)
-        print(label.shape)
+    train = ShapeNet_partseg()
+    test = ShapeNet_partseg('test')
+    
+    print(train[5000][0].shape, train[5000][1].shape)
+    print(train[5000][0], train[5000][1])
+    
+    #for data, label in train:
+    #    print(data.shape)
+    #    print(label.shape)

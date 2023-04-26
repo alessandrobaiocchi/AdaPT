@@ -1,13 +1,8 @@
 from __future__ import print_function
 import os
-import argparse
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from data import ModelNet40, ShapeNet_partseg
-from model import Pct
-import numpy as np
 from torch.utils.data import DataLoader
 from util import cal_loss, IOStream
 import sklearn.metrics as metrics
@@ -43,16 +38,14 @@ def _init_(cfg):
 
 #@hydra.main(config_path=".", config_name="config", version_base=None)
 def train(cfg):
-    train_loader = DataLoader(ModelNet40(partition='train', num_points=cfg.train.num_points), num_workers=2,
+    train_loader = DataLoader(ShapeNet_partseg(partition='train'), num_workers=2,
                             batch_size=cfg.train.batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(ModelNet40(partition='test', num_points=cfg.test.num_points), num_workers=2,
+    test_loader = DataLoader(ShapeNet_partseg(partition='test'), num_workers=2,
                             batch_size=cfg.test.batch_size, shuffle=False, drop_last=False)
 
     device = "cuda" if cfg.cuda else "cpu"
 
-    if cfg.train.adaptive.is_adaptive:
-        model = Lightning_pct_adaptive(cfg)
-    elif cfg.train.merger.is_merger:
+    if cfg.train.merger.is_merger:
         model = Lightning_pct_merger(cfg)
     else:
         "ERROR: No model selected."

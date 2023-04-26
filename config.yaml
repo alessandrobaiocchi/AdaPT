@@ -38,5 +38,9 @@ cuda: True
 wandb: True
 eval: False
 visualize: False
-  
+task: classification
+
+
+
+
 
