@@ -5,6 +5,7 @@ from data import ShapeNet_partseg
 from util import DiceLoss
 from omegaconf import DictConfig
 import hydra
+from datasets.ShapeNet55 import ShapeNet55DataModule
 
 
 
@@ -34,11 +35,11 @@ import hydra
 #print(diceloss(input, target))
 @hydra.main(config_path=".", config_name="config", version_base=None)
 def main(cfg: DictConfig):
-    model = Pct_nogroup(cfg)
-    #print(model)
-    x = torch.randn(1, 3, 1024)
-    out, refs = model(x)
-    print(out.shape, refs.shape)
+    shapenet = ShapeNet55DataModule()
+    shapenet.setup()    
+    print(shapenet.train_dataset[0][0].shape)
+    
+
 
 if __name__ == "__main__":
     main()

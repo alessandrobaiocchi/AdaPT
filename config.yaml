@@ -1,46 +1,53 @@
 experiment:
   exp_name: "hydra_test"
   seed: 42
-dataset:
-  name: modelnet40
+dataset: ModelNet40  # ModelNet40, ScanObjectNN, ShapeNet55
+nclasses:       # 40, 15, 55
 model:
   name: AdaPT
   model_path: ""
 train:
   batch_size: 64
-  epochs: 100
+  epochs: 150
   use_sgd: False
   lr: 0.0001
   momentum: 0.9
   num_points: 1024
   dropout: 0.5
+  n_blocks: 4
   adaptive:
     is_adaptive: False
     layers_to_drop: [0,1,2,3]
     drop_ratio: [0.2,0.4,0.6,0.8]
-    alpha: 0.1
+    alpha: 0.01
     drop_warmup: True
     drop_slow_start: 20
     drop_slow_end: 40
   merger:
-    is_merger: True
+    is_merger: False
     n_q: [64,32,16,8]
   
 test:
   batch_size: 64
   num_points: 1024
   adaptive:
-    is_adaptive: True
+    is_adaptive: False
     layers_to_drop: [0,1,2,3]
     drop_ratio: [0.2,0.4,0.6,0.8]
     alpha: 0.1
+
+teacher:
+  use_teacher: False
+  epochs: 150
+  kl_alpha: 0.1
+  clstkn_alpha: 0.1
+  distill_alpha: 0.1
 cuda: True
 wandb: True
 eval: False
 visualize: False
 task: classification
-
-
+visualize_pc: False
 
 
 

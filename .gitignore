@@ -5,3 +5,7 @@ PCT_Pytorch/*
 wandb/*
 *.out
 some/*
+pointnet2_ops_lib/*
+best_models/*
+multirun/*
+outputs/*

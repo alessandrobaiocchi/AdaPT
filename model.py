@@ -54,7 +54,7 @@ class DropPredictor(nn.Module):
         return self.out_conv(x)
 
 class Pct(nn.Module):
-    def __init__(self, args, output_channels=40):
+    def __init__(self, args, output_channels):
         super(Pct, self).__init__()
         self.args = args
         self.conv1 = nn.Conv1d(3, 64, kernel_size=1, bias=False)
@@ -65,11 +65,11 @@ class Pct(nn.Module):
         self.gather_local_1 = Local_op(in_channels=256, out_channels=256)
 
         if args.train.adaptive.is_adaptive:   
-            self.pt_last = Point_Transformer_Adaptive(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4, layers_to_drop=args.train.adaptive.layers_to_drop)
+            self.pt_last = Point_Transformer_Adaptive(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=args.train.n_blocks, layers_to_drop=args.train.adaptive.layers_to_drop)
         elif args.train.merger.is_merger:
-            self.pt_last = Point_Transformer_Merger(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
+            self.pt_last = Point_Transformer_Merger(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=args.train.n_blocks)
         else:
-            self.pt_last = Point_Transformer_Last(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=4)
+            self.pt_last = Point_Transformer_Last(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=args.train.n_blocks)
         
 
 
@@ -106,8 +106,10 @@ class Pct(nn.Module):
             x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
         elif self.args.train.merger.is_merger:
             x, merge_ref= self.pt_last(feature_1)
+        else:
+            x = self.pt_last(feature_1)
         #x, masks = self.pt_last(x)
-
+        tokens = x
         #print("output SA:", x.shape)
 
         #POOLING INSTEAD OF CLASS TOKEN
@@ -124,9 +126,17 @@ class Pct(nn.Module):
             x = self.dp2(x)
             x = self.linear3(x)
             if self.args.train.adaptive.is_adaptive:
-                return x, masks, distr
+                if self.args.visualize_pc:
+                    return x, masks, distr, tokens, xyz, new_xyz
+                else:
+                    return x, masks, distr, tokens
             elif self.args.train.merger.is_merger:
-                return x
+                if self.args.visualize_pc:
+                    return x, xyz, new_xyz
+                else:
+                    return x
+            else:
+                return x, tokens
         
         elif self.args.task == "segmentation":
 
@@ -136,7 +146,10 @@ class Pct(nn.Module):
             x = F.leaky_relu(self.bn7(self.linear2(x)), negative_slope=0.2)
             x = self.dp2(x)
             x = self.linear3(x)
-            return x, merge_ref
+            if self.args.visualize_pc:
+                return x, merge_ref, xyz, new_xyz
+            else:
+                return x, merge_ref
 
 
 
@@ -253,6 +266,24 @@ class TransformerBlock(nn.Module):
     return x
   
 
+def batch_index_select(x, idx):
+    if len(x.size()) == 3:
+        B, N, C = x.size()
+        N_new = idx.size(1)
+        offset = torch.arange(B, dtype=torch.long, device=x.device).view(B, 1) * N
+        idx = idx + offset
+        out = x.reshape(B*N, C)[idx.reshape(-1)].reshape(B, N_new, C)
+        return out
+    elif len(x.size()) == 2:
+        B, N = x.size()
+        N_new = idx.size(1)
+        offset = torch.arange(B, dtype=torch.long, device=x.device).view(B, 1) * N
+        idx = idx + offset
+        out = x.reshape(B*N)[idx.reshape(-1)].reshape(B, N_new)
+        return out
+    else:
+        raise NotImplementedError
+
 
 class Point_Transformer_Adaptive(nn.Module):
     def __init__(self, args, channels=256, d_model = 256, d_k=16, d_v=32, n_heads=8, n_blocks=4, layers_to_drop=[]):
@@ -276,7 +307,7 @@ class Point_Transformer_Adaptive(nn.Module):
         x = F.relu(self.bn2(self.conv2(x)))
 
         x = x.permute(0,2,1)
-        x = torch.cat([x, repeat(self.cls_token, 'v -> b 1 v', b=x.shape[0])], dim=1)
+        x = torch.cat([repeat(self.cls_token, 'v -> b 1 v', b=x.shape[0]), x], dim=1)
     
         # Initialize drop decisions
         B, P, _ = x.shape
@@ -285,20 +316,21 @@ class Point_Transformer_Adaptive(nn.Module):
         #policy = torch.zeros(B, P, 1, dtype=x.dtype, device=x.device)
         out_pred_prob = []
         pred_distr = [[],[],[],[]]
+        p = 0
 
         for i, l in enumerate(self.blocks):
             if i in self.layers_to_drop:
                 # Ignore the class token
-                points_x = x[:, :-1]
+                points_x = x[:, 1:]
                 # Current drop score
-                pred_score = self.score_predictor[i](points_x, prev_decision)#.reshape(B, -1, 2)
+                pred_score = self.score_predictor[p](points_x, prev_decision)#.reshape(B, -1, 2)
                 #for visualization purposes
-                pred_distr[i].append(pred_score.reshape(-1,2))
+                pred_distr[p].append(pred_score.reshape(-1,2))
                 # Slow warmup
                 keepall = torch.cat((torch.zeros_like(pred_score[:,:,0:1]), torch.ones_like(pred_score[:,:,1:2])),2) 
                 pred_score = pred_score*drop_temp + keepall*(1-drop_temp)
                 
-                if True:#self.training:
+                if self.training:
                     # Convert to log-prob
                     pred_score = torch.log(pred_score + 1e-8)
                     # Sample mask and update previous one
@@ -308,21 +340,39 @@ class Point_Transformer_Adaptive(nn.Module):
                     #hard = torch.argmax(pred_score, dim=-1).float().unsqueeze(-1)
                     #decision = soft + (hard - soft).detach()
                     #hard_keep_decision = decision * prev_decision
+                    
+                    #for visualization purposes
+                    out_pred_prob.append(hard_keep_decision.reshape(B, P-1))
+                    # Build the full policy (always keep the class token)
+                    cls_policy = torch.ones(B, 1, 1, dtype=hard_keep_decision.dtype, device=hard_keep_decision.device)
+                    policy = torch.cat([cls_policy, hard_keep_decision], dim=1)
+                    prev_decision = hard_keep_decision
+                    x = l(x, policy=policy)
                 else:
                     # Treshold mask and update previous one
-                    hard_keep_decision = (pred_score[:, :, 1:2] > 0.9).float() * prev_decision
-                
+                    #hard_keep_decision = (pred_score[:, :, 1:2] > 0.9).float() * prev_decision
+                    # OR Deterministic mask with fixed number of tokens kept and update previous one
+                    score = pred_score[:,:,1]
+                    num_keep_tokens = int((1-self.args.train.adaptive.drop_ratio[p]) * (P-1))
+                    keep_policy = torch.argsort(score, dim=1, descending=True)[:, :num_keep_tokens]
+                    cls_policy = torch.zeros(B, 1, dtype=keep_policy.dtype, device=keep_policy.device)
+                    now_policy = torch.cat([cls_policy, keep_policy+1], dim=1)
+                    x = batch_index_select(x, now_policy)
+                    prev_decision = batch_index_select(prev_decision, keep_policy)
+                    x = l(x)
+                p += 1
+
+
                 #"Dropout", added for debugging purposes"
                 #stuff = (1-self.args.drop_ratio[i])*drop_temp + (1-drop_temp)
                 #hard_keep_decision = torch.bernoulli(torch.ones_like(hard_keep_decision)*stuff).float().to(hard_keep_decision.device)
+
+            else:
+                if self.training:
+                    x = l(x, policy=policy)   
+                else:
+                    x = l(x)
                 
-                #for visualization purposes
-                out_pred_prob.append(hard_keep_decision.reshape(B, P-1))
-                # Build the full policy (always keep the class token)
-                cls_policy = torch.ones(B, 1, 1, dtype=hard_keep_decision.dtype, device=hard_keep_decision.device)
-                policy = torch.cat([cls_policy, hard_keep_decision], dim=1)
-                prev_decision = hard_keep_decision
-            x = l(x, policy=policy)
 
         return x, out_pred_prob, pred_distr
 

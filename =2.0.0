@@ -1,0 +1,11 @@
+
+Looking for: ['pytorch', 'torchvision', 'torchaudio']
+
+
+Pinned packages:
+  - python 3.10.*
+
+
+Could not solve for environment specs
+The following package could not be installed
+└─ torchaudio   does not exist (perhaps a typo or a missing channel).

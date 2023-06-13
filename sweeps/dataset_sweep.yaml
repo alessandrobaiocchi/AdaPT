@@ -1,0 +1,19 @@
+program: main2.py
+name: dataset_sweep
+project: AdaPT
+method: grid
+metric:
+  goal: maximize
+  name: val/acc
+parameters:
+  dataset:
+    values: [ModelNet40, ScanObjectNN, ShapeNet55]
+  train.adaptive.is_adaptive:
+    values: [True, False]
+
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}

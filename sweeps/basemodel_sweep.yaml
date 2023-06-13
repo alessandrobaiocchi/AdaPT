@@ -1,0 +1,29 @@
+program: main2.py
+name: basemodel_sweep
+project: AdaPT
+method: grid
+metric:
+  goal: maximize
+  name: val/acc
+parameters:
+  dataset:
+    values: [ModelNet40]
+  train.adaptive.is_adaptive:
+    values: [True]
+  train.n_blocks:
+    values: [4, 8, 12]
+  train.adaptive.is_adaptive:
+    values: [False]
+  train.lr:
+    values: [0.01, 0.001, 0.0001]
+  train.batch_size:
+    values: [64]
+  train.dropout:
+    values: [0.2, 0.5, 0.8]
+  
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args_no_hyphens}
