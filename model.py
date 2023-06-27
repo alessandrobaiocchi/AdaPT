@@ -5,6 +5,7 @@ from util import sample_and_group
 from einops.layers.torch import Rearrange
 from einops import reduce, rearrange, repeat
 import numpy as np
+from point2vec.pointnet import PointcloudTokenizer
 
 class Local_op(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -57,12 +58,14 @@ class Pct(nn.Module):
     def __init__(self, args, output_channels):
         super(Pct, self).__init__()
         self.args = args
-        self.conv1 = nn.Conv1d(3, 64, kernel_size=1, bias=False)
-        self.conv2 = nn.Conv1d(64, 64, kernel_size=1, bias=False)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.bn2 = nn.BatchNorm1d(64)
-        self.gather_local_0 = Local_op(in_channels=128, out_channels=128)
-        self.gather_local_1 = Local_op(in_channels=256, out_channels=256)
+        self.n_tokens = args.train.n_tokens
+        self.conv1 = nn.Conv1d(3, 192, kernel_size=1, bias=False)
+        self.conv2 = nn.Conv1d(192, 256, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(192)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.gather_local_0 = Local_op(in_channels=6, out_channels=64)
+        self.gather_local_1 = Local_op(in_channels=128, out_channels=256)
+        #self.gather_local_1 = Local_op(in_channels=6, out_channels=self.n_tokens)
 
         if args.train.adaptive.is_adaptive:   
             self.pt_last = Point_Transformer_Adaptive(args, channels=256, d_model=512, d_k=32, d_v=64, n_heads=8, n_blocks=args.train.n_blocks, layers_to_drop=args.train.adaptive.layers_to_drop)
@@ -82,13 +85,36 @@ class Pct(nn.Module):
         self.dp2 = nn.Dropout(p=args.train.dropout)
         self.linear3 = nn.Linear(128, output_channels)
 
+        self.positional_encoding = nn.Sequential(
+            nn.Linear(3, 128),
+            nn.GELU(),
+            nn.Linear(128, 256),
+        )
+        self.tokenizer = PointcloudTokenizer(
+            num_groups=256,
+            group_size=32,
+            group_radius=None,
+            token_dim=256,
+        )
+
+
     def forward(self, x, drop_temp=1):
+        #OLD PATCHING METHOD
         xyz = x.permute(0, 2, 1)
         batch_size, _, _ = x.size()
         # B, D, N
-        x = F.relu(self.bn1(self.conv1(x)))
+        #x = F.relu(self.bn1(self.conv1(x)))
         # B, D, N
-        x = F.relu(self.bn2(self.conv2(x)))
+        #x = F.relu(self.bn2(self.conv2(x)))
+        
+        #print(x.shape)
+
+        #x = F.relu(self.bn1(self.conv1(x)))
+        #feature_1 = F.relu(self.bn2(self.conv2(x)))
+
+        #print(feature_1.shape)
+
+        #patchifier
         
         x = x.permute(0, 2, 1)
         new_xyz, new_feature = sample_and_group(npoint=512, radius=0.15, nsample=32, xyz=xyz, points=x)         
@@ -97,10 +123,24 @@ class Pct(nn.Module):
         #print("feature0:", feature_0.shape)
         
         feature = feature_0.permute(0, 2, 1)
-        new_xyz, new_feature = sample_and_group(npoint=256, radius=0.2, nsample=32, xyz=new_xyz, points=feature) 
+        new_xyz, new_feature = sample_and_group(npoint=self.n_tokens, radius=0.2, nsample=32, xyz=new_xyz, points=feature) 
         feature_1 = self.gather_local_1(new_feature)
-
+        
+        
+        
         #print("feature1:", feature_1.shape)
+        
+        #print(x.shape)
+        """
+        tokens, centers = self.tokenizer(x.permute(0,2,1))
+
+        pos_embedding=False
+        if pos_embedding:
+            self.cls_pos = nn.Parameter(torch.zeros(256))
+            pos_embeddings = self.positional_encoding(centers)
+
+        feature_1 = tokens
+        """
 
         if self.args.train.adaptive.is_adaptive:
             x, masks,distr = self.pt_last(feature_1, drop_temp=drop_temp)
@@ -360,6 +400,7 @@ class Point_Transformer_Adaptive(nn.Module):
                     x = batch_index_select(x, now_policy)
                     prev_decision = batch_index_select(prev_decision, keep_policy)
                     x = l(x)
+                    #print(i, x.shape)
                 p += 1
 
 

@@ -13,7 +13,7 @@ from model import Pct
 import numpy as np
 from torch.utils.data import DataLoader
 from util import cal_loss, IOStream
-import sklearn.metrics as metrics
+#import sklearn.metrics as metrics
 import wandb
 from pylightning_mods import Lightning_pct_adaptive, Lightning_pct_merger, Lightning_pct
 from pytorch_lightning.loggers import WandbLogger
@@ -93,9 +93,9 @@ def train(cfg, train_loader, test_loader):
 
     if cfg.wandb:
         wandb_logger = WandbLogger(project="PCT_Pytorch", name=cfg.experiment.exp_name, config=cfg)
-        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2, callbacks=[checkpoint_callback])
+        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2, callbacks=[checkpoint_callback])#, profiler="simple")
     else:
-        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, gradient_clip_val=2, callbacks=[checkpoint_callback])
+        trainer = pl.Trainer(max_epochs=cfg.train.epochs, accelerator=device, devices=1, gradient_clip_val=2, callbacks=[checkpoint_callback])#, profiler="simple")
 
     trainer.fit(model, train_loader, test_loader)
     if cfg.wandb:
@@ -106,22 +106,24 @@ def test(cfg, test_loader):
     
     device = "cuda" if cfg.cuda else "cpu"
 
-    model = Lightning_Pct(cfg)
+    model = Lightning_pct_adaptive(cfg)
     #ckpt_path = "checkpoints/"+args.exp_name+"/models/best.ckpt"
     #ckpt_path = "PCT_Pytorch/6w3c4337/checkpoints/epoch=99-step=15300.ckpt"  #DETERMINISTIC DROP
-    ckpt_path = "PCT_Pytorch/1nca3jm1/checkpoints/epoch=99-step=15300.ckpt"   #GUMBEL NOISE
+    #ckpt_path = "PCT_Pytorch/1nca3jm1/checkpoints/epoch=99-step=15300.ckpt"   #GUMBEL NOISE
+    ckpt_path = "best_models/epoch=134-step=20655.ckpt" #boh
 
     #model = model.load_from_checkpoint(ckpt_path, args)
     model.load_state_dict(torch.load(ckpt_path)["state_dict"])
     #model = nn.DataParallel(model) 
     if cfg.wandb:
         wandb_logger = WandbLogger(project="PCT_Pytorch", name=cfg.experiment.exp_name, config=cfg)
-        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2)
+        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, logger=[wandb_logger], gradient_clip_val=2, profiler="simple")
     else:
-        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, gradient_clip_val=2)
+        trainer = pl.Trainer(max_epochs=cfg.test.epochs, accelerator=device, devices=1, gradient_clip_val=2, profiler="simple")
     trainer.test(model, test_loader)
     if cfg.wandb:
         wandb.finish()
+
 
 #@hydra.main(config_path=".", config_name="config", version_base=None)
 def visualize(cfg):

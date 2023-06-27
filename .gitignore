@@ -9,3 +9,5 @@ pointnet2_ops_lib/*
 best_models/*
 multirun/*
 outputs/*
+lightning_logs/*
+
